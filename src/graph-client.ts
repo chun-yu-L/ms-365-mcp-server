@@ -9,6 +9,7 @@ interface GraphRequestOptions {
   rawResponse?: boolean;
   accessToken?: string;
   refreshToken?: string;
+  queryParams?: Record<string, string>;
 
   [key: string]: unknown;
 }
@@ -107,6 +108,13 @@ class GraphClient {
     const tenantId = process.env.MS365_MCP_TENANT_ID || 'common';
     const clientId = process.env.MS365_MCP_CLIENT_ID || '084a3e9f-a9f4-43f7-89f9-d229cf97853e';
     const clientSecret = process.env.MS365_MCP_CLIENT_SECRET;
+
+    // Log these values for debugging (mask sensitive info)
+    logger.info(`refreshAccessToken debug: ${JSON.stringify({
+      tenantId,
+      clientId: clientId ? `${clientId.substring(0, 8)}...` : 'NOT SET',
+      clientSecret: clientSecret ? `${clientSecret.substring(0, 4)}...` : 'NOT SET',
+    })}`);
 
     if (!clientSecret) {
       throw new Error('MS365_MCP_CLIENT_SECRET not configured');

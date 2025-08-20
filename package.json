@@ -19,7 +19,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "verify": "npm run generate && npm run lint && npm run format:check && npm run build && npm run test",
-    "inspector": "npx @modelcontextprotocol/inspector tsx src/index.ts"
+    "inspector": "npx @modelcontextprotocol/inspector tsx src/index.ts -- --read-only --enabled-tools 'mail'"
   },
   "keywords": [
     "microsoft",
@@ -39,7 +39,6 @@
     "dotenv": "^17.0.1",
     "express": "^5.1.0",
     "js-yaml": "^4.1.0",
-    "keytar": "^7.9.0",
     "winston": "^3.17.0",
     "zod": "^3.24.2"
   },

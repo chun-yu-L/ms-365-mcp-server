@@ -1,6 +1,5 @@
 import type { AccountInfo, Configuration } from '@azure/msal-node';
 import { PublicClientApplication } from '@azure/msal-node';
-import keytar from 'keytar';
 import logger from './logger.js';
 import fs, { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -70,13 +69,6 @@ function buildScopesFromEndpoints(includeWorkAccountScopes: boolean = false): st
     }
   });
 
-  Object.entries(SCOPE_HIERARCHY).forEach(([higherScope, lowerScopes]) => {
-    if (lowerScopes.every((scope) => scopesSet.has(scope))) {
-      lowerScopes.forEach((scope) => scopesSet.delete(scope));
-      scopesSet.add(higherScope);
-    }
-  });
-
   return Array.from(scopesSet);
 }
 
@@ -116,96 +108,11 @@ class AuthManager {
     this.isOAuthMode = oauthTokenFromEnv != null;
   }
 
-  async loadTokenCache(): Promise<void> {
-    try {
-      let cacheData: string | undefined;
-
-      try {
-        const cachedData = await keytar.getPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT);
-        if (cachedData) {
-          cacheData = cachedData;
-        }
-      } catch (keytarError) {
-        logger.warn(
-          `Keychain access failed, falling back to file storage: ${(keytarError as Error).message}`
-        );
-      }
-
-      if (!cacheData && existsSync(FALLBACK_PATH)) {
-        cacheData = readFileSync(FALLBACK_PATH, 'utf8');
-      }
-
-      if (cacheData) {
-        this.msalApp.getTokenCache().deserialize(cacheData);
-      }
-
-      // Load selected account
-      await this.loadSelectedAccount();
-    } catch (error) {
-      logger.error(`Error loading token cache: ${(error as Error).message}`);
-    }
-  }
-
-  private async loadSelectedAccount(): Promise<void> {
-    try {
-      let selectedAccountData: string | undefined;
-
-      try {
-        const cachedData = await keytar.getPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY);
-        if (cachedData) {
-          selectedAccountData = cachedData;
-        }
-      } catch (keytarError) {
-        logger.warn(
-          `Keychain access failed for selected account, falling back to file storage: ${(keytarError as Error).message}`
-        );
-      }
-
-      if (!selectedAccountData && existsSync(SELECTED_ACCOUNT_PATH)) {
-        selectedAccountData = readFileSync(SELECTED_ACCOUNT_PATH, 'utf8');
-      }
-
-      if (selectedAccountData) {
-        const parsed = JSON.parse(selectedAccountData);
-        this.selectedAccountId = parsed.accountId;
-        logger.info(`Loaded selected account: ${this.selectedAccountId}`);
-      }
-    } catch (error) {
-      logger.error(`Error loading selected account: ${(error as Error).message}`);
-    }
-  }
-
-  async saveTokenCache(): Promise<void> {
-    try {
-      const cacheData = this.msalApp.getTokenCache().serialize();
-
-      try {
-        await keytar.setPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT, cacheData);
-      } catch (keytarError) {
-        logger.warn(
-          `Keychain save failed, falling back to file storage: ${(keytarError as Error).message}`
-        );
-
-        fs.writeFileSync(FALLBACK_PATH, cacheData);
-      }
-    } catch (error) {
-      logger.error(`Error saving token cache: ${(error as Error).message}`);
-    }
-  }
-
   private async saveSelectedAccount(): Promise<void> {
     try {
       const selectedAccountData = JSON.stringify({ accountId: this.selectedAccountId });
 
-      try {
-        await keytar.setPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY, selectedAccountData);
-      } catch (keytarError) {
-        logger.warn(
-          `Keychain save failed for selected account, falling back to file storage: ${(keytarError as Error).message}`
-        );
-
-        fs.writeFileSync(SELECTED_ACCOUNT_PATH, selectedAccountData);
-      }
+      fs.writeFileSync(SELECTED_ACCOUNT_PATH, selectedAccountData);
     } catch (error) {
       logger.error(`Error saving selected account: ${(error as Error).message}`);
     }
@@ -301,7 +208,6 @@ class AuthManager {
         logger.info(`Auto-selected new account: ${response.account.username}`);
       }
 
-      await this.saveTokenCache();
       return this.accessToken;
     } catch (error) {
       logger.error(`Error in device code flow: ${(error as Error).message}`);
@@ -375,13 +281,6 @@ class AuthManager {
       this.accessToken = null;
       this.tokenExpiry = null;
       this.selectedAccountId = null;
-
-      try {
-        await keytar.deletePassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT);
-        await keytar.deletePassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY);
-      } catch (keytarError) {
-        logger.warn(`Keychain deletion failed: ${(keytarError as Error).message}`);
-      }
 
       if (fs.existsSync(FALLBACK_PATH)) {
         fs.unlinkSync(FALLBACK_PATH);

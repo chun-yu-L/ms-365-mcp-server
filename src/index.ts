@@ -18,7 +18,6 @@ async function main(): Promise<void> {
 
     const scopes = buildScopesFromEndpoints(includeWorkScopes);
     const authManager = new AuthManager(undefined, scopes);
-    await authManager.loadTokenCache();
 
     if (args.login) {
       await authManager.acquireTokenByDeviceCode();

@@ -76,6 +76,57 @@ interface CallToolResult {
   [key: string]: unknown;
 }
 
+/**
+ * 因為 mcpo 會吃不到參數描述，所以這邊把參數描述寫進完整 description 中變成類似 python docstring 格式讓 llm 可以讀到
+ */
+function buildToolDescription(tool: any): string {
+  let description = tool.description || `Execute ${tool.method.toUpperCase()} request to ${tool.path}`;
+  
+  if (tool.parameters && tool.parameters.length > 0) {
+    description += '\n\nParameters:';
+    
+    for (const param of tool.parameters) {
+      // const paramType = param.type || 'Unknown';
+      const paramDesc = param.description || param.schema?.description || 'No description';
+      const isOptional = param.schema?.isOptional?.() || param.schema?._def?.typeName === 'ZodOptional';
+      const optionalText = isOptional ? ' (optional)' : '';
+      
+      description += `\n- ${param.name}${optionalText}: ${paramDesc}`;
+    }
+  }
+
+  return description;
+}
+
+/**
+ * 為工具添加通用參數（分頁控制、認證token等）
+ */
+function addCommonToolParameters(
+  paramSchema: Record<string, z.ZodTypeAny>, 
+  tool: any
+): Record<string, z.ZodTypeAny> {
+  // Add fetchAllPages parameter for GET requests that have path parameters
+  if (tool.method.toUpperCase() === 'GET' && tool.path.includes('/')) {
+    paramSchema['fetchAllPages'] = z
+      .boolean()
+      .describe('Automatically fetch all pages of results')
+      .optional();
+  }
+
+  // Add access_token and refresh_token parameters to all tools
+  paramSchema['access_token'] = z
+    .string()
+    .describe('Microsoft access token for authentication')
+    .optional();
+  
+  paramSchema['refresh_token'] = z
+    .string()
+    .describe('Microsoft refresh token for token renewal')
+    .optional();
+
+  return paramSchema;
+}
+
 export function registerGraphTools(
   server: McpServer,
   graphClient: GraphClient,
@@ -110,23 +161,19 @@ export function registerGraphTools(
       continue;
     }
 
-    const paramSchema: Record<string, unknown> = {};
+    const paramSchema: Record<string, z.ZodTypeAny> = {};
     if (tool.parameters && tool.parameters.length > 0) {
       for (const param of tool.parameters) {
         paramSchema[param.name] = param.schema || z.any();
       }
     }
 
-    if (tool.method.toUpperCase() === 'GET' && tool.path.includes('/')) {
-      paramSchema['fetchAllPages'] = z
-        .boolean()
-        .describe('Automatically fetch all pages of results')
-        .optional();
-    }
+    // Add common parameters (pagination control, authentication tokens)
+    addCommonToolParameters(paramSchema, tool);
 
     server.tool(
       tool.alias,
-      tool.description || `Execute ${tool.method.toUpperCase()} request to ${tool.path}`,
+      buildToolDescription(tool),
       paramSchema,
       {
         title: tool.alias,
@@ -143,9 +190,19 @@ export function registerGraphTools(
           const queryParams: Record<string, string> = {};
           const headers: Record<string, string> = {};
           let body: unknown = null;
+          
+          // Extract token parameters
+          const accessToken = params.access_token as string | undefined;
+          const refreshToken = params.refresh_token as string | undefined;
+          
           for (let [paramName, paramValue] of Object.entries(params)) {
             // Skip pagination control parameter - it's not part of the Microsoft Graph API - I think 🤷
             if (paramName === 'fetchAllPages') {
+              continue;
+            }
+            
+            // Skip token parameters - they are handled separately
+            if (paramName === 'access_token' || paramName === 'refresh_token') {
               continue;
             }
 
@@ -200,7 +257,7 @@ export function registerGraphTools(
             path = `${path}${path.includes('?') ? '&' : '?'}${queryString}`;
           }
 
-          const options: { method: string; headers: Record<string, string>; body?: string } = {
+          const options: { method: string; headers: Record<string, string>; body?: string; accessToken?: string; refreshToken?: string; rawResponse?: boolean; queryParams?: Record<string, string> } = {
             method: tool.method.toUpperCase(),
             headers,
           };
@@ -218,6 +275,16 @@ export function registerGraphTools(
           }
 
           logger.info(`Making graph request to ${path} with options: ${JSON.stringify(options)}`);
+
+          // Add token parameters if provided
+          if (accessToken) {
+            options.accessToken = accessToken;
+          }
+          if (refreshToken) {
+            options.refreshToken = refreshToken;
+          }
+
+          logger.info(`Making graph request to ${path} with options: ${JSON.stringify({...options, accessToken: options.accessToken ? '[REDACTED]' : undefined, refreshToken: options.refreshToken ? '[REDACTED]' : undefined})}`);
           let response = await graphClient.graphRequest(path, options);
 
           const fetchAllPages = params.fetchAllPages === true;
@@ -241,6 +308,14 @@ export function registerGraphTools(
                 }
                 nextOptions.queryParams = nextQueryParams;
 
+                // Add token parameters for pagination requests
+                if (accessToken) {
+                  nextOptions.accessToken = accessToken;
+                }
+                if (refreshToken) {
+                  nextOptions.refreshToken = refreshToken;
+                }
+                
                 const nextResponse = await graphClient.graphRequest(nextPath, nextOptions);
                 if (nextResponse && nextResponse.content && nextResponse.content.length > 0) {
                   const nextJsonResponse = JSON.parse(nextResponse.content[0].text);
