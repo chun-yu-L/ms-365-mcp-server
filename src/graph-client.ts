@@ -1,6 +1,7 @@
 import logger from './logger.js';
 import AuthManager from './auth.js';
 import { refreshAccessToken } from './lib/microsoft-auth.js';
+import { gzipSync } from 'zlib';
 
 interface GraphRequestOptions {
   headers?: Record<string, string>;
@@ -10,6 +11,7 @@ interface GraphRequestOptions {
   accessToken?: string;
   refreshToken?: string;
   queryParams?: Record<string, string>;
+  compressionThreshold?: number; // Size threshold in bytes to enable compression
 
   [key: string]: unknown;
 }
@@ -154,7 +156,7 @@ class GraphClient {
       // Use new OAuth-aware request method
       const result = await this.makeRequest(endpoint, options);
 
-      return this.formatJsonResponse(result, options.rawResponse);
+      return this.formatJsonResponse(result, options.rawResponse, options.compressionThreshold);
     } catch (error) {
       logger.error(`Error in Graph API request: ${error}`);
       return {
@@ -164,7 +166,49 @@ class GraphClient {
     }
   }
 
-  formatJsonResponse(data: unknown, rawResponse = false): McpResponse {
+  private compressJsonResponse(jsonString: string, originalSize: number): McpResponse {
+    try {
+      const compressed = gzipSync(Buffer.from(jsonString, 'utf8'));
+      const base64Compressed = compressed.toString('base64');
+      
+      const compressionRatio = ((originalSize - base64Compressed.length) / originalSize * 100).toFixed(2);
+      logger.info(`Response compressed from ${originalSize} to ${base64Compressed.length} bytes (${compressionRatio}% reduction)`);
+
+      const compressedResponse = {
+        data: base64Compressed,
+        is_compressed: true
+      };
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify(compressedResponse, null, 2) }],
+        _meta: {
+          originalSize,
+          compressedSize: base64Compressed.length,
+          compressionRatio: `${compressionRatio}%`
+        }
+      };
+    } catch (compressionError) {
+      logger.error(`Failed to compress response: ${compressionError}`);
+      // Return the original uncompressed response instead of null
+      return {
+        content: [{ type: 'text', text: jsonString }],
+      };
+    }
+  }
+
+  private removeODataProperties(obj: Record<string, unknown>): void {
+    if (typeof obj === 'object' && obj !== null) {
+      Object.keys(obj).forEach((key) => {
+        if (key.startsWith('@odata.')) {
+          delete obj[key];
+        } else if (typeof obj[key] === 'object') {
+          this.removeODataProperties(obj[key] as Record<string, unknown>);
+        }
+      });
+    }
+  }
+
+  formatJsonResponse(data: unknown, rawResponse = false, compressionThreshold = 1024*1024*5): McpResponse {
     if (rawResponse) {
       return {
         content: [{ type: 'text', text: JSON.stringify(data) }],
@@ -178,22 +222,20 @@ class GraphClient {
     }
 
     // Remove OData properties
-    const removeODataProps = (obj: Record<string, unknown>): void => {
-      if (typeof obj === 'object' && obj !== null) {
-        Object.keys(obj).forEach((key) => {
-          if (key.startsWith('@odata.')) {
-            delete obj[key];
-          } else if (typeof obj[key] === 'object') {
-            removeODataProps(obj[key] as Record<string, unknown>);
-          }
-        });
-      }
-    };
+    this.removeODataProperties(data as Record<string, unknown>);
 
-    removeODataProps(data as Record<string, unknown>);
+    const jsonString = JSON.stringify(data, null, 2);
+    const responseSizeBytes = Buffer.byteLength(jsonString, 'utf8');
+    
+    logger.info(`Response size: ${responseSizeBytes} bytes, compression threshold: ${compressionThreshold} bytes`);
+
+    // Check if we should compress the response
+    if (responseSizeBytes > compressionThreshold) {
+      return this.compressJsonResponse(jsonString, responseSizeBytes);
+    }
 
     return {
-      content: [{ type: 'text', text: JSON.stringify(data, null, 2) }],
+      content: [{ type: 'text', text: jsonString }],
     };
   }
 }

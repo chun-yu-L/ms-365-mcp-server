@@ -3,7 +3,9 @@
     "pathPattern": "/me/messages",
     "method": "get",
     "toolName": "list-mail-messages",
-    "scopes": ["Mail.Read"]
+    "scopes": ["Mail.Read"],
+    "enableCompression": true,
+    "compressionThreshold": 5242880
   },
   {
     "pathPattern": "/me/mailFolders",
@@ -15,19 +17,25 @@
     "pathPattern": "/me/mailFolders/{mailFolder-id}/messages",
     "method": "get",
     "toolName": "list-mail-folder-messages",
-    "scopes": ["Mail.Read"]
+    "scopes": ["Mail.Read"],
+    "enableCompression": true,
+    "compressionThreshold": 5242880
   },
   {
     "pathPattern": "/me/messages/{message-id}",
     "method": "get",
     "toolName": "get-mail-message",
-    "scopes": ["Mail.Read"]
+    "scopes": ["Mail.Read"],
+    "enableCompression": true,
+    "compressionThreshold": 5242880
   },
   {
     "pathPattern": "/me/messages/{message-id}/attachments",
     "method": "get",
     "toolName": "list-mail-attachments",
-    "scopes": ["Mail.Read"]
+    "scopes": ["Mail.Read"],
+    "enableCompression": true,
+    "compressionThreshold": 5242880
   },
   {
     "pathPattern": "/me/messages/{message-id}/attachments/{attachment-id}",

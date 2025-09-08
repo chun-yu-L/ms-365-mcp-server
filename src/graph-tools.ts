@@ -16,6 +16,8 @@ interface EndpointConfig {
   toolName: string;
   scopes?: string[];
   workScopes?: string[];
+  enableCompression?: boolean;
+  compressionThreshold?: number;
 }
 
 const endpointsData = JSON.parse(
@@ -257,7 +259,7 @@ export function registerGraphTools(
             path = `${path}${path.includes('?') ? '&' : '?'}${queryString}`;
           }
 
-          const options: { method: string; headers: Record<string, string>; body?: string; accessToken?: string; refreshToken?: string; rawResponse?: boolean; queryParams?: Record<string, string> } = {
+          const options: { method: string; headers: Record<string, string>; body?: string; accessToken?: string; refreshToken?: string; rawResponse?: boolean; queryParams?: Record<string, string>; compressionThreshold?: number } = {
             method: tool.method.toUpperCase(),
             headers,
           };
@@ -282,6 +284,15 @@ export function registerGraphTools(
           }
           if (refreshToken) {
             options.refreshToken = refreshToken;
+          }
+
+          // Check if compression should be enabled for this endpoint
+          if (endpointConfig?.enableCompression) {
+            options.compressionThreshold = endpointConfig.compressionThreshold || 1024*1024*5; // Default 5MB
+            logger.info(`Compression enabled for endpoint ${tool.alias} with threshold ${options.compressionThreshold} bytes`);
+          } else if (params.fetchAllPages === true) {
+            options.compressionThreshold = 1024*1024*5;
+            logger.info(`Auto-enabling compression for paginated request on ${tool.alias} with threshold ${options.compressionThreshold} bytes`);
           }
 
           logger.info(`Making graph request to ${path} with options: ${JSON.stringify({...options, accessToken: options.accessToken ? '[REDACTED]' : undefined, refreshToken: options.refreshToken ? '[REDACTED]' : undefined})}`);
