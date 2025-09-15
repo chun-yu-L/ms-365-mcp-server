@@ -19,7 +19,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "verify": "npm run generate && npm run lint && npm run format:check && npm run build && npm run test",
-    "inspector": "npx @modelcontextprotocol/inspector tsx src/index.ts -- --read-only --enabled-tools 'mail'"
+    "inspector": "npx @modelcontextprotocol/inspector tsx src/index.ts -- --read-only --org-mode --enabled-tools 'sharepoint'"
   },
   "keywords": [
     "microsoft",
