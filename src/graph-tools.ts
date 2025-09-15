@@ -126,6 +126,12 @@ function addCommonToolParameters(
     .describe('Microsoft refresh token for token renewal')
     .optional();
 
+  // Add includeHeaders parameter for all tools to capture ETags and other headers
+  paramSchema['includeHeaders'] = z
+    .boolean()
+    .describe('Include response headers (including ETag) in the response metadata')
+    .optional();
+
   return paramSchema;
 }
 
@@ -208,6 +214,11 @@ export function registerGraphTools(
               continue;
             }
 
+            // Skip headers control parameter - it's not part of the Microsoft Graph API
+            if (paramName === 'includeHeaders') {
+              continue;
+            }
+
             // Ok, so, MCP clients (such as claude code) doesn't support $ in parameter names,
             // and others might not support __, so we strip them in hack.ts and restore them here
             const odataParams = [
@@ -259,7 +270,17 @@ export function registerGraphTools(
             path = `${path}${path.includes('?') ? '&' : '?'}${queryString}`;
           }
 
-          const options: { method: string; headers: Record<string, string>; body?: string; accessToken?: string; refreshToken?: string; rawResponse?: boolean; queryParams?: Record<string, string>; compressionThreshold?: number } = {
+          const options: {
+            method: string;
+            headers: Record<string, string>;
+            body?: string;
+            accessToken?: string;
+            refreshToken?: string;
+            rawResponse?: boolean;
+            includeHeaders?: boolean;
+            queryParams?: Record<string, string>;
+            compressionThreshold?: number;
+          } = {
             method: tool.method.toUpperCase(),
             headers,
           };
@@ -274,6 +295,11 @@ export function registerGraphTools(
 
           if (isProbablyMediaContent) {
             options.rawResponse = true;
+          }
+
+          // Set includeHeaders if requested
+          if (params.includeHeaders === true) {
+            options.includeHeaders = true;
           }
 
           logger.info(`Making graph request to ${path} with options: ${JSON.stringify(options)}`);

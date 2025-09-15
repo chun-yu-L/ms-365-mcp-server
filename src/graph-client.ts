@@ -9,6 +9,7 @@ interface GraphRequestOptions {
   method?: string;
   body?: string;
   rawResponse?: boolean;
+  includeHeaders?: boolean;
   accessToken?: string;
   refreshToken?: string;
   queryParams?: Record<string, string>;
@@ -94,15 +95,32 @@ class GraphClient {
       }
 
       const text = await response.text();
+      let result: any;
+
       if (text === '') {
-        return { message: 'OK!' };
+        result = { message: 'OK!' };
+      } else {
+        try {
+          result = JSON.parse(text);
+        } catch {
+          result = { message: 'OK!', rawResponse: text };
+        }
       }
 
-      try {
-        return JSON.parse(text);
-      } catch {
-        return { message: 'OK!', rawResponse: text };
+      // If includeHeaders is requested, add response headers to the result
+      if (options.includeHeaders) {
+        const etag = response.headers.get('ETag') || response.headers.get('etag');
+
+        // Simple approach: just add ETag to the result if it's an object
+        if (result && typeof result === 'object' && !Array.isArray(result)) {
+          return {
+            ...result,
+            _etag: etag || 'no-etag-found',
+          };
+        }
       }
+
+      return result;
     } catch (error) {
       logger.error('Microsoft Graph API request failed:', error);
       throw error;
@@ -213,6 +231,59 @@ class GraphClient {
   }
 
   async formatJsonResponse(data: unknown, rawResponse = false, compressionThreshold = 1024*1024*5): Promise<McpResponse> {
+    // Handle the case where data includes headers metadata
+    if (data && typeof data === 'object' && '_etag' in data) {
+      const responseData = data as {
+        [key: string]: unknown;
+        _etag?: string;
+      };
+
+      const meta: Record<string, unknown> = {};
+      if (responseData._etag) {
+        meta.etag = responseData._etag;
+      }
+
+      // Remove _etag from the data before processing
+      const { _etag, ...cleanData } = responseData;
+
+      if (rawResponse) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify(cleanData) }],
+          _meta: meta,
+        };
+      }
+
+      if (cleanData === null || cleanData === undefined) {
+        return {
+          content: [{ type: 'text', text: JSON.stringify({ success: true }) }],
+          _meta: meta,
+        };
+      }
+
+      // Remove OData properties
+      this.removeODataProperties(cleanData as Record<string, unknown>);
+
+      const jsonString = JSON.stringify(cleanData, null, 2);
+      const responseSizeBytes = Buffer.byteLength(jsonString, 'utf8');
+      
+      logger.info(`Response size: ${responseSizeBytes} bytes, compression threshold: ${compressionThreshold} bytes`);
+
+      // Check if we should compress the response
+      if (responseSizeBytes > compressionThreshold) {
+        const compressedResponse = await this.compressJsonResponse(jsonString, responseSizeBytes);
+        return {
+          ...compressedResponse,
+          _meta: meta,
+        };
+      }
+
+      return {
+        content: [{ type: 'text', text: jsonString }],
+        _meta: meta,
+      };
+    }
+
+    // Original handling for backward compatibility
     if (rawResponse) {
       return {
         content: [{ type: 'text', text: JSON.stringify(data) }],
