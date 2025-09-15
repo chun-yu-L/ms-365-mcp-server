@@ -231,86 +231,64 @@ class GraphClient {
   }
 
   async formatJsonResponse(data: unknown, rawResponse = false, compressionThreshold = 1024*1024*5): Promise<McpResponse> {
-    // Handle the case where data includes headers metadata
+    // Extract metadata and clean data
+    let cleanData: unknown;
+    let meta: Record<string, unknown> = {};
+
     if (data && typeof data === 'object' && '_etag' in data) {
       const responseData = data as {
         [key: string]: unknown;
         _etag?: string;
       };
 
-      const meta: Record<string, unknown> = {};
       if (responseData._etag) {
         meta.etag = responseData._etag;
       }
 
       // Remove _etag from the data before processing
-      const { _etag, ...cleanData } = responseData;
-
-      if (rawResponse) {
-        return {
-          content: [{ type: 'text', text: JSON.stringify(cleanData) }],
-          _meta: meta,
-        };
-      }
-
-      if (cleanData === null || cleanData === undefined) {
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ success: true }) }],
-          _meta: meta,
-        };
-      }
-
-      // Remove OData properties
-      this.removeODataProperties(cleanData as Record<string, unknown>);
-
-      const jsonString = JSON.stringify(cleanData, null, 2);
-      const responseSizeBytes = Buffer.byteLength(jsonString, 'utf8');
-      
-      logger.info(`Response size: ${responseSizeBytes} bytes, compression threshold: ${compressionThreshold} bytes`);
-
-      // Check if we should compress the response
-      if (responseSizeBytes > compressionThreshold) {
-        const compressedResponse = await this.compressJsonResponse(jsonString, responseSizeBytes);
-        return {
-          ...compressedResponse,
-          _meta: meta,
-        };
-      }
-
-      return {
-        content: [{ type: 'text', text: jsonString }],
-        _meta: meta,
-      };
+      const { _etag, ...extractedData } = responseData;
+      cleanData = extractedData;
+    } else {
+      cleanData = data;
     }
 
-    // Original handling for backward compatibility
+    // Handle raw response
     if (rawResponse) {
       return {
-        content: [{ type: 'text', text: JSON.stringify(data) }],
+        content: [{ type: 'text', text: JSON.stringify(cleanData) }],
+        ...(Object.keys(meta).length > 0 && { _meta: meta }),
       };
     }
 
-    if (data === null || data === undefined) {
+    // Handle null/undefined data
+    if (cleanData === null || cleanData === undefined) {
       return {
         content: [{ type: 'text', text: JSON.stringify({ success: true }) }],
+        ...(Object.keys(meta).length > 0 && { _meta: meta }),
       };
     }
 
     // Remove OData properties
-    this.removeODataProperties(data as Record<string, unknown>);
+    this.removeODataProperties(cleanData as Record<string, unknown>);
 
-    const jsonString = JSON.stringify(data, null, 2);
+    // Generate JSON string and check size
+    const jsonString = JSON.stringify(cleanData, null, 2);
     const responseSizeBytes = Buffer.byteLength(jsonString, 'utf8');
     
     logger.info(`Response size: ${responseSizeBytes} bytes, compression threshold: ${compressionThreshold} bytes`);
 
     // Check if we should compress the response
     if (responseSizeBytes > compressionThreshold) {
-      return await this.compressJsonResponse(jsonString, responseSizeBytes);
+      const compressedResponse = await this.compressJsonResponse(jsonString, responseSizeBytes);
+      return {
+        ...compressedResponse,
+        ...(Object.keys(meta).length > 0 && { _meta: meta }),
+      };
     }
 
     return {
       content: [{ type: 'text', text: jsonString }],
+      ...(Object.keys(meta).length > 0 && { _meta: meta }),
     };
   }
 }
