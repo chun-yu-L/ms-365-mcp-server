@@ -1,7 +1,8 @@
 import logger from './logger.js';
 import AuthManager from './auth.js';
 import { refreshAccessToken } from './lib/microsoft-auth.js';
-import { gzipSync } from 'zlib';
+import { gzip } from 'zlib';
+import { promisify } from 'util';
 
 interface GraphRequestOptions {
   headers?: Record<string, string>;
@@ -11,7 +12,7 @@ interface GraphRequestOptions {
   accessToken?: string;
   refreshToken?: string;
   queryParams?: Record<string, string>;
-  compressionThreshold?: number; // Size threshold in bytes to enable compression
+  compressionThreshold?: number;
 
   [key: string]: unknown;
 }
@@ -35,9 +36,11 @@ class GraphClient {
   private authManager: AuthManager;
   private accessToken: string | null = null;
   private refreshToken: string | null = null;
+  private gzipAsync: (buffer: Buffer) => Promise<Buffer>;
 
   constructor(authManager: AuthManager) {
     this.authManager = authManager;
+    this.gzipAsync = promisify(gzip);
   }
 
   setOAuthTokens(accessToken: string, refreshToken?: string): void {
@@ -156,7 +159,7 @@ class GraphClient {
       // Use new OAuth-aware request method
       const result = await this.makeRequest(endpoint, options);
 
-      return this.formatJsonResponse(result, options.rawResponse, options.compressionThreshold);
+      return await this.formatJsonResponse(result, options.rawResponse, options.compressionThreshold);
     } catch (error) {
       logger.error(`Error in Graph API request: ${error}`);
       return {
@@ -166,9 +169,10 @@ class GraphClient {
     }
   }
 
-  private compressJsonResponse(jsonString: string, originalSize: number): McpResponse {
+  private async compressJsonResponse(jsonString: string, originalSize: number): Promise<McpResponse> {
     try {
-      const compressed = gzipSync(Buffer.from(jsonString, 'utf8'));
+      // Use async gzip to avoid blocking the event loop
+      const compressed = await this.gzipAsync(Buffer.from(jsonString, 'utf8'));
       const base64Compressed = compressed.toString('base64');
       
       const compressionRatio = ((originalSize - base64Compressed.length) / originalSize * 100).toFixed(2);
@@ -208,7 +212,7 @@ class GraphClient {
     }
   }
 
-  formatJsonResponse(data: unknown, rawResponse = false, compressionThreshold = 1024*1024*5): McpResponse {
+  async formatJsonResponse(data: unknown, rawResponse = false, compressionThreshold = 1024*1024*5): Promise<McpResponse> {
     if (rawResponse) {
       return {
         content: [{ type: 'text', text: JSON.stringify(data) }],
@@ -231,7 +235,7 @@ class GraphClient {
 
     // Check if we should compress the response
     if (responseSizeBytes > compressionThreshold) {
-      return this.compressJsonResponse(jsonString, responseSizeBytes);
+      return await this.compressJsonResponse(jsonString, responseSizeBytes);
     }
 
     return {
